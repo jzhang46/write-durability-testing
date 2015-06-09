@@ -19,16 +19,16 @@ void ensure(bool condition)
         throw std::system_error(errno, std::system_category());
 }
 
-class Writer;
+class WriteStrategy;
 
-class SyncOperation {
+class SyncStrategy {
 public:
-    virtual void sync(const Writer&) = 0;
+    virtual void sync(const WriteStrategy&) = 0;
 };
 
-class Writer {
+class WriteStrategy {
 public:
-    Writer(const std::string& directory, const std::string& file_name) : m_fd(-1), m_length(0)
+    WriteStrategy(const std::string& directory, const std::string& file_name) : m_fd(-1), m_length(0)
     {
         std::string file_path = directory + "/" + file_name;
         m_fd = ::open(file_path.c_str(), O_RDWR | O_CREAT | O_EXCL, 0666);
@@ -43,7 +43,7 @@ public:
         ensure(fsync(directory_fd) == 0);
     }
 
-    virtual ~Writer()
+    virtual ~WriteStrategy()
     {
         close(m_fd);
     }
@@ -69,10 +69,10 @@ public:
         return nullptr;
     }
 
-    void sync(const std::vector<SyncOperation*>& operations) const
+    void sync(const std::vector<SyncStrategy*>& strategies) const
     {
-        for (auto* op : operations)
-            op->sync(*this);
+        for (auto* st : strategies)
+            st->sync(*this);
     }
 
     virtual void extend(off_t length)
@@ -87,14 +87,14 @@ protected:
     size_t m_length;
 };
 
-class PWriteWriter : public Writer {
+class PWriteWriteStrategy : public WriteStrategy {
 public:
-    static std::unique_ptr<Writer> create(const std::string& directory, const std::string& file_name)
+    static std::unique_ptr<WriteStrategy> create(const std::string& directory, const std::string& file_name)
     {
-        return std::unique_ptr<Writer>(new PWriteWriter(directory, file_name));
+        return std::unique_ptr<WriteStrategy>(new PWriteWriteStrategy(directory, file_name));
     }
 
-    using Writer::Writer;
+    using WriteStrategy::WriteStrategy;
 
     void write(off_t offset, void* data, size_t length)
     {
@@ -102,19 +102,19 @@ public:
     }
 };
 
-class MMapWriter : public Writer {
+class MMapWriteStrategy : public WriteStrategy {
 public:
-    static std::unique_ptr<Writer> create(const std::string& directory, const std::string& file_name)
+    static std::unique_ptr<WriteStrategy> create(const std::string& directory, const std::string& file_name)
     {
-        return std::unique_ptr<Writer>(new MMapWriter(directory, file_name));
+        return std::unique_ptr<WriteStrategy>(new MMapWriteStrategy(directory, file_name));
     }
 
-    MMapWriter(const std::string& directory, const std::string& file_name)
-        : Writer(directory, file_name)
+    MMapWriteStrategy(const std::string& directory, const std::string& file_name)
+        : WriteStrategy(directory, file_name)
         , m_buffer(nullptr)
     {}
 
-    ~MMapWriter() { remap(m_length, 0); }
+    ~MMapWriteStrategy() { remap(m_length, 0); }
 
     void* buffer() const override
     {
@@ -124,7 +124,7 @@ public:
     void extend(off_t length) override
     {
         off_t old_length = m_length;
-        Writer::extend(length);
+        WriteStrategy::extend(length);
 
         remap(old_length, m_length);
     }
@@ -152,9 +152,9 @@ private:
     void *m_buffer;
 };
 
-class MSyncOperation : public SyncOperation {
+class MSyncStrategy : public SyncStrategy {
 public:
-    void sync(const Writer& writer) override
+    void sync(const WriteStrategy& writer) override
     {
         void* buffer = writer.buffer();
         if (!buffer)
@@ -168,24 +168,24 @@ public:
     }
 };
 
-class FSyncOperation : public SyncOperation {
+class FSyncStrategy : public SyncStrategy {
 public:
-    void sync(const Writer& writer) override
+    void sync(const WriteStrategy& writer) override
     {
         ensure(fsync(writer.fileDescriptor()) == 0);
     }
 };
 
-class FullFSyncOperation : public SyncOperation {
+class FullFSyncStrategy : public SyncStrategy {
 public:
-    void sync(const Writer& writer) override
+    void sync(const WriteStrategy& writer) override
     {
         ensure(fcntl(writer.fileDescriptor(), F_FULLFSYNC) == 0);
     }
 };
 
-std::vector<SyncOperation*> sync_operations;
-std::function<std::unique_ptr<Writer> (std::string, std::string)> writer_factory;
+std::vector<SyncStrategy*> sync_strategies;
+std::function<std::unique_ptr<WriteStrategy> (std::string, std::string)> writer_factory;
 
 std::string current_timestamp()
 {
@@ -202,27 +202,27 @@ int initialize_from_arguments(int argc, char** argv)
     if (argc != 3)
         return 1;
 
-    char* sync_operation_list_string = argv[1];
+    char* sync_strategy_list_string = argv[1];
     char* context;
-    for (const char* operation_cstr = strtok_r(sync_operation_list_string, ",", &context);
-         operation_cstr;
-         operation_cstr = strtok_r(nullptr, ",", &context)) {
-        std::string operation { operation_cstr };
-        if (operation == "msync")
-            sync_operations.push_back(new MSyncOperation);
-        else if (operation == "fsync")
-            sync_operations.push_back(new FSyncOperation);
-        else if (operation == "fullfsync")
-            sync_operations.push_back(new FullFSyncOperation);
+    for (const char* strategy_cstr = strtok_r(sync_strategy_list_string, ",", &context);
+         strategy_cstr;
+         strategy_cstr = strtok_r(nullptr, ",", &context)) {
+        std::string strategy { strategy_cstr };
+        if (strategy == "msync")
+            sync_strategies.push_back(new MSyncStrategy);
+        else if (strategy == "fsync")
+            sync_strategies.push_back(new FSyncStrategy);
+        else if (strategy == "fullfsync")
+            sync_strategies.push_back(new FullFSyncStrategy);
         else
             return 1;
     }
 
-    std::string write_operation_string = argv[2];
-    if (write_operation_string == "mmap")
-        writer_factory = MMapWriter::create;
-    else if (write_operation_string == "write")
-        writer_factory = PWriteWriter::create;
+    std::string write_strategy_string = argv[2];
+    if (write_strategy_string == "mmap")
+        writer_factory = MMapWriteStrategy::create;
+    else if (write_strategy_string == "write")
+        writer_factory = PWriteWriteStrategy::create;
     else
         return 1;
 
@@ -254,7 +254,7 @@ int main(int argc, char** argv)
             fputc('\n', stderr);
         fprintf(stderr, "Truncating file to %zu bytes.\n", file_size);
         writer->extend(file_size);
-        writer->sync(sync_operations);
+        writer->sync(sync_strategies);
 
         char page_buffer[PAGE_SIZE];
 
@@ -265,14 +265,14 @@ int main(int argc, char** argv)
             memset_pattern8(page_buffer, &j, PAGE_SIZE);
             writer->write(offset, page_buffer, PAGE_SIZE);
         }
-        writer->sync(sync_operations);
+        writer->sync(sync_strategies);
         fprintf(stderr, " done!\n");
 
         // Simulate updating the header portion of the file.
         fprintf(stderr, "Updating header portion of file...");
         memset_pattern8(page_buffer, &file_size, PAGE_SIZE);
         writer->write(0, page_buffer, PAGE_SIZE);
-        writer->sync(sync_operations);
+        writer->sync(sync_strategies);
         fprintf(stderr, " done!\n");
 
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
