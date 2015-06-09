@@ -1,16 +1,17 @@
-#include <assert.h>
+#include <cassert>
 #include <chrono>
+#include <cstdio>
+#include <ctime>
 #include <dirent.h>
 #include <fcntl.h>
 #include <random>
-#include <stdio.h>
 #include <string>
 #include <sys/errno.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <thread>
-#include <time.h>
 #include <unistd.h>
+#include <unordered_map>
 #include <vector>
 
 void ensure(bool condition)
@@ -191,7 +192,8 @@ public:
     }
 };
 
-std::vector<SyncStrategy*> sync_strategies;
+std::vector<SyncStrategy*> write_sync_strategies;
+std::vector<SyncStrategy*> extend_sync_strategies;
 std::function<std::unique_ptr<WriteStrategy> (std::string, std::string)> writer_factory;
 
 std::string current_timestamp()
@@ -204,10 +206,30 @@ std::string current_timestamp()
     return buf;
 }
 
-int initialize_from_arguments(int argc, char** argv)
+static const std::unordered_map<std::string, SyncStrategy*> sync_strategies_by_name = { {"none", new NoopSyncStrategy}, {"msync", new MSyncStrategy},
+                                                                                        {"fsync", new FSyncStrategy}, {"fullfsync", new FullFSyncStrategy} };
+
+std::vector<SyncStrategy*> sync_strategies_from_string(char* strategy_list_string)
 {
-    if (argc != 3)
-        return 1;
+    std::vector<SyncStrategy*> strategies;
+    char* context;
+    for (const char* strategy = strtok_r(strategy_list_string, ",", &context);
+         strategy;
+         strategy = strtok_r(nullptr, ",", &context)) {
+
+        auto it = sync_strategies_by_name.find(strategy);
+        if (it != sync_strategies_by_name.end())
+            strategies.push_back(it->second);
+        else
+            throw std::domain_error("Unknown sync strategy");
+    }
+    return strategies;
+}
+
+void initialize_from_arguments(int argc, char** argv)
+{
+    if (argc != 4)
+        throw std::length_error("Expected 4 arguments.");
 
     std::string write_strategy_string = argv[1];
     if (write_strategy_string == "mmap")
@@ -215,33 +237,19 @@ int initialize_from_arguments(int argc, char** argv)
     else if (write_strategy_string == "write")
         writer_factory = PWriteWriteStrategy::create;
     else
-        return 1;
+        throw std::domain_error("Unknown write strategy");
 
-    char* sync_strategy_list_string = argv[2];
-    char* context;
-    for (const char* strategy_cstr = strtok_r(sync_strategy_list_string, ",", &context);
-         strategy_cstr;
-         strategy_cstr = strtok_r(nullptr, ",", &context)) {
-        std::string strategy { strategy_cstr };
-        if (strategy == "msync")
-            sync_strategies.push_back(new MSyncStrategy);
-        else if (strategy == "fsync")
-            sync_strategies.push_back(new FSyncStrategy);
-        else if (strategy == "fullfsync")
-            sync_strategies.push_back(new FullFSyncStrategy);
-        else if (strategy == "none")
-            sync_strategies.push_back(new NoopSyncStrategy);
-        else
-            return 1;
-    }
-
-    return 0;
+    write_sync_strategies = sync_strategies_from_string(argv[2]);
+    extend_sync_strategies = sync_strategies_from_string(argv[3]);
 }
 
 int main(int argc, char** argv)
 {
-    if (initialize_from_arguments(argc, argv)) {
-        fprintf(stderr, "Usage: main msync,fsync,fullfsync [mmap|write]\n");
+    try {
+        initialize_from_arguments(argc, argv);
+    } catch (const std::exception& e) {
+        fprintf(stderr, "%s\n", e.what());
+        fprintf(stderr, "Usage: main [mmap|write] write-sync-strategy-list extend-sync-strategy-list\n");
         return 1;
     }
 
@@ -263,7 +271,7 @@ int main(int argc, char** argv)
             fputc('\n', stderr);
         fprintf(stderr, "Truncating file to %zu bytes.\n", file_size);
         writer->extend(file_size);
-        writer->sync(sync_strategies);
+        writer->sync(extend_sync_strategies);
 
         char page_buffer[PAGE_SIZE];
 
@@ -274,14 +282,14 @@ int main(int argc, char** argv)
             memset_pattern8(page_buffer, &j, PAGE_SIZE);
             writer->write(offset, page_buffer, PAGE_SIZE);
         }
-        writer->sync(sync_strategies);
+        writer->sync(write_sync_strategies);
         fprintf(stderr, " done!\n");
 
         // Simulate updating the header portion of the file.
         fprintf(stderr, "Updating header portion of file...");
         memset_pattern8(page_buffer, &file_size, PAGE_SIZE);
         writer->write(0, page_buffer, PAGE_SIZE);
-        writer->sync(sync_strategies);
+        writer->sync(write_sync_strategies);
         fprintf(stderr, " done!\n");
 
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
