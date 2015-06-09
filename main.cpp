@@ -202,7 +202,15 @@ int initialize_from_arguments(int argc, char** argv)
     if (argc != 3)
         return 1;
 
-    char* sync_strategy_list_string = argv[1];
+    std::string write_strategy_string = argv[1];
+    if (write_strategy_string == "mmap")
+        writer_factory = MMapWriteStrategy::create;
+    else if (write_strategy_string == "write")
+        writer_factory = PWriteWriteStrategy::create;
+    else
+        return 1;
+
+    char* sync_strategy_list_string = argv[2];
     char* context;
     for (const char* strategy_cstr = strtok_r(sync_strategy_list_string, ",", &context);
          strategy_cstr;
@@ -217,14 +225,6 @@ int initialize_from_arguments(int argc, char** argv)
         else
             return 1;
     }
-
-    std::string write_strategy_string = argv[2];
-    if (write_strategy_string == "mmap")
-        writer_factory = MMapWriteStrategy::create;
-    else if (write_strategy_string == "write")
-        writer_factory = PWriteWriteStrategy::create;
-    else
-        return 1;
 
     return 0;
 }
