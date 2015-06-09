@@ -4,6 +4,13 @@ This is a simple test application to verify the durability provided by OS X when
 It can test writing via `mmap` or `pwrite` with various combinations of `msync`, `fsync` and the `F_FULLFSYNC` `fcntl` for synchronization.
 Note that some combinations are not valid: `msync` requires a memory mapped buffer that is not available when using `pwrite`.
 
+## Building and running
+
+1. `make`
+2. `rm -f working/ && ./main mmap msync`
+3. Kill power to the machine.
+4. `./verify working/test-*`
+
 ## Observed results
 
 Testing was performed on a Mac mini with an SSD running OS X 10.10.2, plugged into a power brick with an on-off switch.
