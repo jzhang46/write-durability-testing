@@ -152,6 +152,13 @@ private:
     void *m_buffer;
 };
 
+class NoopSyncStrategy : public SyncStrategy {
+public:
+    void sync(const WriteStrategy& writer) override
+    {
+    }
+};
+
 class MSyncStrategy : public SyncStrategy {
 public:
     void sync(const WriteStrategy& writer) override
@@ -222,6 +229,8 @@ int initialize_from_arguments(int argc, char** argv)
             sync_strategies.push_back(new FSyncStrategy);
         else if (strategy == "fullfsync")
             sync_strategies.push_back(new FullFSyncStrategy);
+        else if (strategy == "none")
+            sync_strategies.push_back(new NoopSyncStrategy);
         else
             return 1;
     }
