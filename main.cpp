@@ -35,13 +35,13 @@ public:
         m_fd = ::open(file_path.c_str(), O_RDWR | O_CREAT | O_EXCL, 0666);
         ensure(m_fd != -1);
 
-        std::unique_ptr<DIR, decltype(&closedir)> directory_handle { opendir(directory.c_str()), &closedir};
-        ensure(directory_handle.get());
+        DIR* directory_handle = opendir(directory.c_str());
+        ensure(directory_handle);
 
-        int directory_fd = dirfd(directory_handle.get());
-        ensure(directory_fd != -1);
+        m_parentFD = dirfd(directory_handle);
+        ensure(m_parentFD != -1);
 
-        ensure(fsync(directory_fd) == 0);
+        ensure(fsync(m_parentFD) == 0);
     }
 
     virtual ~WriteStrategy()
@@ -53,6 +53,12 @@ public:
     {
         assert(m_fd != -1);
         return m_fd;
+    }
+
+    int parentFileDescriptor() const
+    {
+        assert(m_parentFD != -1);
+        return m_parentFD;
     }
 
     size_t length() const
@@ -80,6 +86,7 @@ public:
     virtual void write(off_t offset, void* data, size_t length) = 0;
 protected:
     int m_fd;
+    int m_parentFD;
     size_t m_length;
 };
 
@@ -179,6 +186,15 @@ public:
     }
 };
 
+class FSyncParentStrategy : public SyncStrategy {
+public:
+    void sync(const WriteStrategy& writer) override
+    {
+        ensure(fsync(writer.parentFileDescriptor()) == 0);
+    }
+};
+
+
 class FullFSyncStrategy : public SyncStrategy {
 public:
     void sync(const WriteStrategy& writer) override
@@ -202,7 +218,8 @@ std::string current_timestamp()
 }
 
 static const std::unordered_map<std::string, SyncStrategy*> sync_strategies_by_name = { {"none", new NoopSyncStrategy}, {"msync", new MSyncStrategy},
-                                                                                        {"fsync", new FSyncStrategy}, {"fullfsync", new FullFSyncStrategy} };
+                                                                                        {"fsync", new FSyncStrategy}, {"fullfsync", new FullFSyncStrategy},
+                                                                                        {"fsyncparent", new FSyncParentStrategy} };
 
 std::vector<SyncStrategy*> sync_strategies_from_string(char* strategy_list_string)
 {
