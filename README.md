@@ -39,4 +39,4 @@ After restoring power the `verify` command was used to examine the state of the 
 
 ## Future improvements
 
-* Allow for transactions that don't extend the file size.
+* Allow for a configurable delay after each operation.

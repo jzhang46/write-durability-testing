@@ -276,35 +276,49 @@ int main(int argc, char** argv)
 
     auto writer = writer_factory(working_directory, test_file_name);
 
+    // Simulate a series of transactional writes to the file.
+    // The file size is increased by 16 pages after every 128 writes.
+    // The 128 writes correspond to updating each of the 16 new pages 8 times.
+    // Each write consists of writing a full page of data, followed by updating
+    // the index on page 0 to reflect the newly-written data.
+    const size_t file_page_count_increment = 16;
+    const size_t versions_per_file_size = 8;
+
     for (size_t i = 0; i < 1024; ++i) {
-        size_t page_count = 10 + i * 10;
+        size_t page_count = file_page_count_increment * (i + 1) + 1;
         size_t file_size = page_count * PAGE_SIZE;
         if (i > 0)
             fputc('\n', stderr);
+
         fprintf(stderr, "Truncating file to %zu bytes.\n", file_size);
         writer->extend(file_size);
         writer->sync(extend_sync_strategies);
 
-        char page_buffer[PAGE_SIZE];
+        size_t base_offset = (page_count - file_page_count_increment) * PAGE_SIZE;
+        for (size_t j = 0; j < file_page_count_increment * versions_per_file_size; ++j) {
+            char page_buffer[PAGE_SIZE];
 
-        // Simulate updating the data portion of the file.
-        fprintf(stderr, "Updating data portion of file...");
-        for (size_t j = 1; j < page_count; ++j) {
-            size_t offset = (page_count - j) * PAGE_SIZE;
-            memset_pattern8(page_buffer, &j, PAGE_SIZE);
+            // Simulate updating the data portion of the file.
+            size_t index = j % file_page_count_increment;
+            size_t version = j / file_page_count_increment;
+            size_t offset = base_offset + index * PAGE_SIZE;
+            fprintf(stderr, "Writing index %zu, version %zu at offset %zu...", index, version, offset);
+            struct { size_t a, b; } pattern = { index, version };
+            memset_pattern16(page_buffer, &pattern, PAGE_SIZE);
             writer->write(offset, page_buffer, PAGE_SIZE);
+
+            writer->sync(write_sync_strategies);
+            fprintf(stderr, " done!\n");
+
+            // Simulate updating the header portion of the file.
+            fprintf(stderr, "Updating header portion of file...");
+            struct { size_t a, b, c, d; } header = { base_offset, index, version, std::numeric_limits<size_t>::max() };
+            writer->write(index * sizeof(header), &header, sizeof(header));
+            writer->sync(write_sync_strategies);
+            fprintf(stderr, " done!\n");
+
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
         }
-        writer->sync(write_sync_strategies);
-        fprintf(stderr, " done!\n");
-
-        // Simulate updating the header portion of the file.
-        fprintf(stderr, "Updating header portion of file...");
-        memset_pattern8(page_buffer, &file_size, PAGE_SIZE);
-        writer->write(0, page_buffer, PAGE_SIZE);
-        writer->sync(write_sync_strategies);
-        fprintf(stderr, " done!\n");
-
-        std::this_thread::sleep_for(std::chrono::milliseconds(500));
     }
     return 0;
 }
