@@ -7,7 +7,7 @@ Note that some combinations are not valid: `msync` requires a memory mapped buff
 ## Building and running
 
 1. `make`
-2. `rm -f working/ && ./main mmap msync`
+2. `rm -f working/ && ./main mmap msync msync`
 3. Kill power to the machine.
 4. `./verify working/test-*`
 
@@ -40,4 +40,3 @@ After restoring power the `verify` command was used to examine the state of the 
 ## Future improvements
 
 * Allow for transactions that don't extend the file size.
-* Allow for diffferent sync strategies when extending the file size vs writing data.
