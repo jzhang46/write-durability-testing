@@ -55,11 +55,6 @@ public:
         return m_fd;
     }
 
-    void setFileDescriptor(int fd)
-    {
-        m_fd = fd;
-    }
-
     size_t length() const
     {
         return m_length;
